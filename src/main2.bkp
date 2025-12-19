@@ -1,0 +1,383 @@
+#include <Arduino.h>
+// OWN CLASSES
+#include <Casillero.h>
+#include <Hour.h>
+#include <Sensor_Distancia.h>
+#include <Sensor_Inercial.h>
+#include <Servidor.h>
+#include <SoC.h>
+#include <Pantalla_TFT.h>
+#include <USB_Comunication.h>
+// LIBRARIES
+#include <math.h>
+
+// DEFINITIONS
+#define I2C_VELOCITY 100000
+#define WHEEL_CIRC 2*PI*0.1 //m WITH R=0.1m
+#define MAX_IN_STAND_BY 15  //min
+#define L_SQUARE 0.3  //m
+  //SERVER
+#define ssid "usuario"
+#define password "password"
+#define URL "localhost"
+  //CONSUMPTIONS---LOS DATOS ESTAN INVENTADOS
+#define INIT_STATE SoCLevel::HIGH_LEVEL
+#define LOAD TypeElement::LOAD
+#define SOURCE TypeElement::SOURCE
+#define CAPACITY 3500
+#define CON_uC 50
+#define CON_MPU 100
+#define CON_VL 100
+#define CON_TFT 100
+#define CON_BOOST 250
+#define CON_BUMB 500
+#define CON_CHARGE 500 
+
+// PIN DEFINITIONS
+  //DISTANCE
+#define SCL_VL6180_PIN 20
+#define SDA_VL6180_PIN 21
+  //MPU
+#define SCL_MPU_PIN 5
+#define SDA_MPU_PIN 4
+#define INT_MPU 7   //UNUSED
+  //TFT
+#define CLK_TFT_PIN 12
+#define MOSI_TFT_PIN 11
+#define RST_TFT_PIN 10
+#define DC_TFT_PIN 9
+#define CS_TFT_PIN 46
+  //HALL
+#define HALL1_PIN 18
+#define HALL2_PIN 16
+  //OTHERS
+#define BUTTON_PIN 3
+#define PUMP_PIN 0
+#define EN_BOOST_PIN 37
+#define IS_CHARGING_PIN 42
+#define RED_LED_PIN 2
+#define GREEN_LED_PIN 1
+
+// ENUM DEFINITIONS
+enum class State : uint8_t {
+    ON,
+    OFF,
+    STANDBY,
+    SEND_INFO,
+};
+/* TFT COLORS
+#define ST77XX_BLACK 0x0000
+#define ST77XX_WHITE 0xFFFF
+#define ST77XX_RED 0xF800
+#define ST77XX_GREEN 0x07E0
+#define ST77XX_BLUE 0x001F
+#define ST77XX_CYAN 0x07FF
+#define ST77XX_MAGENTA 0xF81F
+#define ST77XX_YELLOW 0xFFE0
+#define ST77XX_ORANGE 0xFC00
+*/
+
+// VARIABLE AND OBJETCT DECLARATIONS
+  //INTERRUPT VARIABLES
+volatile bool flagHall1=false;
+volatile bool flagHall2=false;
+volatile bool flagButton=false;
+volatile bool flagCharging=false;
+volatile bool flagClock=false;
+hw_timer_t* timer=nullptr;
+  //OBJECTS
+TwoWire wireVL6180=TwoWire(0);
+TwoWire wireMPU=TwoWire(1);
+Casillero cells=Casillero(L_SQUARE);
+Hour actualHour=Hour();
+Hour initHour=Hour();
+Hour endHour=Hour();
+Hour maxStandByHour=Hour();
+Sensor_Inercial MPU=Sensor_Inercial(&wireMPU);
+Sensor_Distancia VL=Sensor_Distancia(&wireVL6180);
+Pantalla_TFT tft=Pantalla_TFT(CS_TFT_PIN,DC_TFT_PIN,RST_TFT_PIN,MOSI_TFT_PIN,CLK_TFT_PIN);
+SoC stateBattery=SoC(CAPACITY,INIT_STATE);
+Servidor serv=Servidor(ssid, password, URL);
+USB_Comunication ser=USB_Comunication(&Serial);
+  //OTHER VARIABLES
+int16_t SoC_uC,SoC_MPU,SoC_VL,SoC_TFT,SoC_BOOST,SoC_BUMB,SoC_CHARGE;
+State actualState=State::OFF;
+SoCLevel actualSoCLevel=INIT_STATE;
+bool charging=false;
+bool hall1Detected=false;
+bool hall2Detected=false;
+int8_t direction;  // 1 positive, -1 negative
+float angle;
+uint8_t initCell[2];
+uint8_t endCell[2];
+float initUS, endUS;
+float dx,dy;
+
+
+// INTERRUPT DECLARATIONS
+void IRAM_ATTR hall1Interrupt();
+void IRAM_ATTR hall2Interrupt();
+void IRAM_ATTR buttonInterrupt();
+void IRAM_ATTR chargingInterrupt();
+void IRAM_ATTR oneSec();
+
+// FUNCTION DECLARATIOS
+uint8_t sendInfo();
+uint8_t sendInfoUSB();
+
+void setup() {
+  ser.begin(115200);
+  //INTERRUPTS PIN
+  pinMode(BUTTON_PIN,INPUT_PULLUP);
+  attachInterrupt(BUTTON_PIN,buttonInterrupt,CHANGE);
+  pinMode(HALL1_PIN,INPUT_PULLUP);
+  attachInterrupt(HALL1_PIN,hall1Interrupt,RISING);
+  pinMode(HALL2_PIN,INPUT_PULLUP);
+  attachInterrupt(HALL2_PIN,hall2Interrupt,RISING);
+  pinMode(IS_CHARGING_PIN,INPUT_PULLUP);
+  attachInterrupt(IS_CHARGING_PIN,chargingInterrupt,CHANGE);
+  //OTHER PIN
+  pinMode(PUMP_PIN,OUTPUT);
+  pinMode(EN_BOOST_PIN,OUTPUT);
+  pinMode(GREEN_LED_PIN,OUTPUT);
+  pinMode(RED_LED_PIN,OUTPUT);
+  //COMUNICATIONS  
+  wireVL6180.begin(SDA_VL6180_PIN,SCL_MPU_PIN,I2C_VELOCITY);
+  wireMPU.begin(SDA_MPU_PIN,SCL_MPU_PIN,I2C_VELOCITY);
+  //INIT OBJECTS
+  MPU.begin();
+  MPU.calibrate();
+  VL.begin();
+  tft.begin();
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setTextSize(5);
+  tft.setCursor(0,0);
+  //INIT SoC
+  SoC_uC=stateBattery.addElement(CON_uC,LOAD);
+  SoC_MPU=stateBattery.addElement(CON_MPU,LOAD);
+  SoC_VL=stateBattery.addElement(CON_VL,LOAD);
+  SoC_TFT=stateBattery.addElement(CON_TFT,LOAD);
+  SoC_BOOST=stateBattery.addElement(CON_BOOST,LOAD);
+  SoC_BUMB=stateBattery.addElement(CON_BUMB,LOAD);
+  SoC_CHARGE=stateBattery.addElement(CON_CHARGE,SOURCE);
+
+  //TIMER INTERRUPT
+  timer=timerBegin(0,80,true);
+  timerAttachInterrupt(timer,&oneSec,true);
+  timerAlarmWrite(timer,1000000,true);
+  timerAlarmEnable(timer);
+
+}
+
+void loop() {
+  //INTERRUPT TREATMENT 
+  if(flagClock==true){
+    actualHour.addSeconds(1);
+    stateBattery.calculateSoC(1);
+    flagClock=false;
+  }
+  if(flagButton==true){
+    if(actualState==State::ON){
+      detachInterrupt(HALL1_PIN);
+      detachInterrupt(HALL2_PIN);
+      digitalWrite(PUMP_PIN,LOW);
+      maxStandByHour.copy(actualHour);
+      maxStandByHour.addMinutes(MAX_IN_STAND_BY);
+      actualState=State::STANDBY;
+    }else{
+      attachInterrupt(HALL1_PIN,hall1Interrupt,RISING);
+      attachInterrupt(HALL2_PIN,hall2Interrupt,RISING);
+      digitalWrite(PUMP_PIN,HIGH);
+      while(VL.ask_distance()==false){
+        delay(100);
+      }
+      initUS=VL.get_distance();
+      actualState=State::ON;
+    }
+    flagButton=false;
+  }
+  if(flagCharging==true){
+    if(actualState==State::STANDBY)
+      actualState=State::SEND_INFO;
+    stateBattery.turnOn(SoC_CHARGE);
+    flagCharging=false;
+  }
+  if(flagHall1==true){
+    if(hall2Detected==true){
+      direction=-1;
+      hall2Detected=false;
+    }else{
+      hall1Detected=true;
+    }
+    flagHall1=false;
+  }
+  if(flagHall2==true){
+    if(hall1Detected==true){
+      direction=1;
+      hall1Detected=false;
+    }else{
+      hall2Detected=true;
+    }
+    flagHall2=false;
+  } 
+ 
+  //STATE MACHINEk;
+  switch (actualState){
+    case State::ON:
+      if(direction!=0){
+        while(!MPU.update()){
+          delay(100);
+        }
+        angle=MPU.getYaw()*PI/180;
+        dx=direction*WHEEL_CIRC*cos(angle);
+        endCell[0]=initCell[0]+(uint8_t)floor(dx/L_SQUARE);
+        dy=direction*WHEEL_CIRC*sin(angle);
+        endCell[1]=initCell[1]+(uint8_t)floor(dy/L_SQUARE);
+        cells.addCelda(endCell[0],endCell[1]);
+        direction=0;
+      }
+      break;
+    case State::STANDBY:
+      if(actualHour.isAfter(maxStandByHour))
+        actualState=State::SEND_INFO;
+      break;
+    case State::SEND_INFO:
+      while(VL.ask_distance()==false){
+        delay(100);
+      }
+      endUS=VL.get_distance();
+      endHour.copy(actualHour);
+      tft.println("MENSAJE A ENVIAR");    //FALTA PONER EL MENSAJE
+      digitalWrite(EN_BOOST_PIN,LOW);
+      stateBattery.turnOff(SoC_MPU);
+      stateBattery.turnOff(SoC_VL);
+      stateBattery.turnOff(SoC_TFT);
+      stateBattery.turnOff(SoC_BOOST);
+      if(sendInfo()!=1)
+        tft.println("Error sending information to the server");
+      actualState=State::OFF;
+      break;
+    default:
+      break;
+  }
+
+  actualSoCLevel=stateBattery.getLevelAsEnum();
+  if(actualSoCLevel==SoCLevel::LOW_LEVEL || actualSoCLevel==SoCLevel::QUARTER_LEVEL){
+    digitalWrite(RED_LED_PIN,HIGH);
+    digitalWrite(GREEN_LED_PIN,LOW);
+  }else if(actualSoCLevel==SoCLevel::HIGH_LEVEL || actualSoCLevel==SoCLevel::THREE_QUARTER_LEVEL){
+    digitalWrite(RED_LED_PIN,LOW);
+    digitalWrite(GREEN_LED_PIN,HIGH);
+  }else{
+    digitalWrite(RED_LED_PIN,LOW);
+    digitalWrite(GREEN_LED_PIN,LOW);
+  }
+
+}
+
+// FUNCTIONES DEFINITIOS
+uint8_t sendInfo(){
+  /*
+    OUTPUT VALUES
+    ALL CORRECT          (1)  
+    ERROR IN CONNECT     (-1)
+    ERROR SENDING US     (-2)
+    ERROR SENDING HOUR   (-3)
+    ERROR SENDING MATRIX (-4)
+    ERROR IN DISCONNECT  (-5) 
+    ERROR CREATING SESSION (-6)  
+  */
+  int cont=0;
+  while(serv.connect()==false && cont<=10){
+    delay(2000);
+    cont++;
+  }
+  if(cont==10) return -1;
+  cont=0;
+  while(serv.createSession()==false && cont<=10){
+    delay(2000);
+    cont++;
+  }
+  
+  if(cont==10) return -6;
+  cont=0;
+  while(serv.sendUS(initUS,endUS)!=1 && cont<=5){
+    delay(500);
+    cont++;
+  }
+  if(cont==5) return -2;
+  cont=0;
+  while(serv.sendHours(initHour,endHour)!=1 && cont<=5){
+    delay(500);
+    cont++;
+  }
+  if(cont==5) return -3;
+  cont=0;
+  while(serv.sendMatrix(&cells)!=1 && cont<=5){
+    delay(500);
+    cont++;
+  }
+  if(cont==5) return -4;
+  cont=0;
+  while(serv.disconnect()==false && cont<=10){
+    delay(2000);
+    cont++;
+  }
+  if(cont==10) return -5;
+  cont=0;
+  return 1;
+}
+
+uint8_t sendInfoUSB(){
+  /*
+    OUTPUT VALUES
+    ALL CORRECT          (1)  
+    ERROR CREATING SESSION (-1)
+    ERROR SENDING US     (-2)
+    ERROR SENDING HOUR   (-3)
+    ERROR SENDING MATRIX (-4)
+  */
+  int cont=0;
+  while(ser.createSession()==false && cont<=10){
+    delay(2000);
+    cont++;
+  }
+  if(cont==10) return -1;
+  cont=0;
+  while(ser.sendUS(initUS,endUS)==false && cont<=5){
+    delay(500);
+    cont++;
+  }
+  if(cont==5) return -2;
+  cont=0;
+  while(ser.sendHours(initHour,endHour)==false && cont<=5){
+    delay(500);
+    cont++;
+  }
+  if(cont==5) return -3;
+  cont=0;
+  while(ser.sendMatrix(&cells)==false && cont<=5){
+    delay(500);
+    cont++;
+  }
+  if(cont==5) return -4;
+  cont=0;
+  return 1;
+}
+
+// INTERRUPT DEFINITIONS
+void IRAM_ATTR hall1Interrupt(){
+  flagHall1=true;
+}
+void IRAM_ATTR hall2Interrupt(){
+  flagHall2=true;
+}
+void IRAM_ATTR buttonInterrupt(){
+  flagButton=true;
+}
+void IRAM_ATTR chargingInterrupt(){
+  flagCharging=true;
+}
+void IRAM_ATTR oneSec(){
+  flagClock=true;
+}
