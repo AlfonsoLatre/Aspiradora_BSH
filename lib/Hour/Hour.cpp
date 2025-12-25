@@ -68,7 +68,7 @@ String Hour::ToString(){
     String delimiter=":";
     return String(this->hours)+delimiter+String(this->minutes)+delimiter+String(this->seconds);
 };
-
+    
 //COMPARE HOURS
 bool Hour::isBefore(Hour otherHour){
     return this->hours<otherHour.hours || 

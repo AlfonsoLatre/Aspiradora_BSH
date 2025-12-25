@@ -13,6 +13,7 @@
             TwoWire* wire;
             Adafruit_VL6180X vl = Adafruit_VL6180X();
             float lux;
+            uint8_t rangeBuffer[10];
             uint8_t range;
             uint8_t status;
             

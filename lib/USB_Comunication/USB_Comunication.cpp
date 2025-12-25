@@ -14,7 +14,7 @@ bool USB_Comunication::read(){
     uint8_t checksumRead=0;
     ReadState state=ReadState::HEADER_STATE;
     while(state!=ReadState::IDLE_STATE){
-        timeout=millis()+150;
+        timeout=millis()+3000;
         switch (state){
             case ReadState::HEADER_STATE:
                 if(this->serialPort->available()>=1 && this->serialPort->read()==HEADER)
@@ -23,12 +23,13 @@ bool USB_Comunication::read(){
                     state=ReadState::IDLE_STATE;
                 break;
             case ReadState::LENGTH_STATE:
-                while(this->serialPort->available()<1 && millis()<timeout);
-                if(this->serialPort->available()<1){
+                while(this->serialPort->available()<2 && millis()<timeout);
+                if(this->serialPort->available()<2){
                     state=ReadState::IDLE_STATE;
                     break;
                 }
                 b=this->serialPort->read();
+                b=(b<<8) | this->serialPort->read();
                 if(b>MAX_LENGTH_MESSAGE){
                     state=ReadState::IDLE_STATE;
                 }else{
@@ -93,17 +94,19 @@ void USB_Comunication::write(uint8_t* data, uint16_t length){
 bool USB_Comunication::createSession(){
     uint8_t payload[]={ID_INSTRUCTION};
     this->write(payload,sizeof(payload));
-    this->write(payload,sizeof(payload));
-    if(this->read()==false)
-        return false;
+    while(this->read()==false)
+        delay(750);
     uint8_t* data=this->getMessage();
     uint8_t len=this->getMessageLength();
     if(len<=1)
         return false;
-    for(int i=0;i<len;i++){
-       this->session_id+=(char)data[i];
-    }
+    this->lengthSessionId=len;
+    this->session_id=data;
     return true;
+}
+void USB_Comunication::deleteSession(){
+    this->lengthSessionId=0;
+    this->session_id=0;
 }
 bool USB_Comunication::sendUS(float init, float end){
     uint32_t enteroInit=(uint32_t) init;
@@ -120,7 +123,7 @@ bool USB_Comunication::sendUS(float init, float end){
         decimalEnd=(uint8_t) (((float)enteroEnd-end)*256);
     
     
-    uint8_t len=this->session_id.length();
+    uint8_t len=this->lengthSessionId;
     uint8_t payload[1+1+len+8];     //1 de instruction, otro de size session_id, len de session_id, 8 de los dos us
     uint8_t offset=1+1+len;
     payload[0]=US_INSTRUCTION;
@@ -129,18 +132,18 @@ bool USB_Comunication::sendUS(float init, float end){
         payload[i+2] = this->session_id[i];   // copiar ASCII directamente
     }
         
-    payload[offset+1]=(enteroInit>>16 & 0xFF);
-    payload[offset+2]=(enteroInit>>8 & 0xFF);
-    payload[offset+3]=(enteroInit>>0 & 0xFF);
-    payload[offset+4]=decimalInit;
-    payload[offset+5]=(enteroEnd>>16 & 0xFF);
-    payload[offset+6]=(enteroEnd>>8 & 0xFF);
-    payload[offset+7]=(enteroEnd>>0 & 0xFF);
-    payload[offset+8]=decimalEnd;
+    payload[offset]=(enteroInit>>16 & 0xFF);
+    payload[offset+1]=(enteroInit>>8 & 0xFF);
+    payload[offset+2]=(enteroInit>>0 & 0xFF);
+    payload[offset+3]=decimalInit;
+    payload[offset+4]=(enteroEnd>>16 & 0xFF);
+    payload[offset+5]=(enteroEnd>>8 & 0xFF);
+    payload[offset+6]=(enteroEnd>>0 & 0xFF);
+    payload[offset+7]=decimalEnd;
     //ENVIAR PAQUETE
     this->write(payload,sizeof(payload));
-    if(this->read()==false)
-        return false;
+    while(this->read()==false)
+        delay(750);
     uint8_t* data=this->getMessage();
     len=this->getMessageLength();
     if(len<1 or data[1]==0x00)
@@ -149,7 +152,7 @@ bool USB_Comunication::sendUS(float init, float end){
 }
 
 bool USB_Comunication::sendHours(Hour init, Hour end){
-    uint8_t len=this->session_id.length();
+    uint8_t len=this->lengthSessionId;
     uint8_t payload[1+1+len+6];     //1 de instruction, otro de size session_id, len de session_id, 6 de dos hour
     uint8_t offset=1+1+len;
     payload[0]=HOUR_INSTRUCTION;
@@ -157,26 +160,26 @@ bool USB_Comunication::sendHours(Hour init, Hour end){
     for (int i =0; i < len; i++) {
         payload[i+2] = this->session_id[i];   // copiar ASCII directamente
     }
-    payload[offset+1]=init.getHours();
-    payload[offset+2]=init.getMinutes();
-    payload[offset+3]=init.getSeconds();
-    payload[offset+4]=end.getHours();
-    payload[offset+5]=end.getMinutes();
-    payload[offset+6]=end.getSeconds();
+    payload[offset]=init.getHours();
+    payload[offset+1]=init.getMinutes();
+    payload[offset+2]=init.getSeconds();
+    payload[offset+3]=end.getHours();
+    payload[offset+4]=end.getMinutes();
+    payload[offset+5]=end.getSeconds();
     //ENVIAR PAQUETE
     this->write(payload,sizeof(payload));
-    if(this->read()==false)
-        return false;
+    while(this->read()==false)
+        delay(750);
     
     len=this->getMessageLength();
     uint8_t* data=this->getMessage();
-    if(len<1 or data[1]==0x00)
+    if(len<1 or data[0]==0x00)
         return false;
     return true;
 }
 
 bool USB_Comunication::sendMatrix(Casillero* matrix){
-    uint8_t len=this->session_id.length();
+    uint8_t len=this->lengthSessionId;
     uint8_t offset=1+1+len+2;
     uint8_t* payload=(uint8_t*) malloc(matrix->getNumRow()*matrix->getNumCol()+offset); //MIRAR QUE HACE EXACTAMENTE PARA EXPLICARLO    
     if(payload==NULL)
@@ -197,11 +200,15 @@ bool USB_Comunication::sendMatrix(Casillero* matrix){
     }
     //ENVIAR PAQUETE
     this->write(payload,offset+matrix->getNumRow()*matrix->getNumCol());
-    if(this->read()==false)
-        return false;
+    while(this->read()==false)
+        delay(750);
     uint8_t* data=this->getMessage();
     len=this->getMessageLength();
-    if(len<1 or data[1]==0x00)
+    if(len<1 or data[0]==0x00)
         return false;
     return true;
+}
+
+void USB_Comunication::println(String txt){
+    this->serialPort->println(txt);
 }

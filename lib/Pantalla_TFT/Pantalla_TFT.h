@@ -11,8 +11,8 @@
             Adafruit_ST7789* tft;
             int color;
         public:
-            Pantalla_TFT(int CS_PIN,int DC_PIN,int RST_PIN,int MOSI_PIN,int SCLK_PIN);
-            void begin(int width=240, int height=320, int color=ST77XX_BLACK);           
+            Pantalla_TFT(int CS_PIN,int DC_PIN,int RST_PIN,int MOSI_PIN=-1,int SCLK_PIN=-1);
+            void begin(int width=240, int height=320, int color=ST77XX_BLACK, int SPI_SPEED=10e6);           
             void setCursor(int x, int y);   
             void setTextSize(int size);
             void setTextColor(int color);

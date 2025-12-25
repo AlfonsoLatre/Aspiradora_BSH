@@ -24,6 +24,6 @@
       bool isBefore(Hour otherHour);
       bool isAfter(Hour otherHour);
       bool isBetween(Hour firstHour, Hour secondHour);
-      String ToString();
+      String ToString();  
   };
 #endif

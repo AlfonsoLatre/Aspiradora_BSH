@@ -9,6 +9,9 @@
 
 // DEFINITIONS
 #define I2C_VELOCITY 100000
+#define SPI_VELOCITY 10e6
+#define SERIAL_VELOCITY 115200
+#define PI 3.14159265359
 #define WHEEL_CIRC 2*PI*0.1 //m WITH R=0.1m
 #define MAX_IN_STAND_BY 1  //min
 #define MIN_SPACE_BETWEEN_PRESS 1 //s
@@ -39,7 +42,7 @@
 #define MOSI_TFT_PIN 11
 #define RST_TFT_PIN 10
 #define DC_TFT_PIN 9
-#define CS_TFT_PIN 8
+#define CS_TFT_PIN 46
 /* TFT COLORS
 #define ST77XX_BLACK 0x0000
 #define ST77XX_WHITE 0xFFFF
@@ -72,10 +75,10 @@ Hour actualHour=Hour();
 Hour initHour=Hour();
 Hour endHour=Hour();
 Hour maxStandByHour=Hour();
-Sensor_Inercial MPU=Sensor_Inercial(&wireMPU);
+//Sensor_Inercial MPU=Sensor_Inercial(&wireMPU);
 SoC stateBattery=SoC(CAPACITY,INIT_STATE);
-Pantalla_TFT tft=Pantalla_TFT(CS_TFT_PIN,DC_TFT_PIN,RST_TFT_PIN,MOSI_TFT_PIN,CLK_TFT_PIN);
-//USB_Comunication ser=USB_Comunication(&Serial1);
+//Pantalla_TFT tft=Pantalla_TFT(CS_TFT_PIN,DC_TFT_PIN,RST_TFT_PIN,MOSI_TFT_PIN,CLK_TFT_PIN);
+USB_Comunication ser=USB_Comunication(&Serial);
   //OTHER VARIABLES
 int16_t SoC_uC,SoC_MPU;
 State actualState=State::OFF;
@@ -89,7 +92,8 @@ float dx,dy;
 uint8_t contSec;
 uint32_t lastPressTime;
 int pruebaX, pruebaY;   //BORRAR EN EL FINAL
-
+bool primera=true;
+uint8_t error;
 
 // INTERRUPT DECLARATIONS
 void IRAM_ATTR buttonInterrupt();
@@ -99,26 +103,27 @@ void IRAM_ATTR oneSec();
 uint8_t sendInfoUSB();
 
 void setup() {
-  Serial.begin(115200);
+  ser.begin(SERIAL_VELOCITY);
   //OTHER PIN
   pinMode(PUMP_PIN,OUTPUT);
   pinMode(EN_BOOST_PIN,OUTPUT);
   pinMode(GREEN_LED_PIN,OUTPUT);
   pinMode(RED_LED_PIN,OUTPUT);
+
   //COMUNICATIONS  
   wireMPU.begin(SDA_MPU_PIN,SCL_MPU_PIN,I2C_VELOCITY);
-  //INIT OBJECTS
-  MPU.begin();
-  MPU.calibrate();
+  //INIT MPU
+  //MPU.begin();
+  //MPU.calibrate();
   //INIT SoC
   SoC_uC=stateBattery.addElement(CON_uC,LOAD);
   SoC_MPU=stateBattery.addElement(CON_MPU,LOAD);
   //INIT TFT
-  tft.begin();
-  tft.setTextColor(ST77XX_WHITE);
-  tft.setTextSize(5);
-  tft.setCursor(0,0);
-  tft.println("Hola");
+  //tft.begin();
+  //tft.setTextColor(ST77XX_WHITE);
+  //tft.setTextSize(5);
+  //tft.setCursor(0,0);
+  //tft.println("Hola");
 
   //INTERRUPTS PIN
   pinMode(BUTTON_PIN,INPUT);
@@ -139,7 +144,6 @@ void loop() {
   if(flagClock==true){
     actualHour.addSeconds(1);
     stateBattery.calculateSoC(1);
-    Serial.println("Hour: "+actualHour.ToString());
     flagClock=false;
     contSec=0;
   }
@@ -169,7 +173,7 @@ void loop() {
     }
     flagButton=false;
   }
-
+  /* PRUEBA MPU. FALTA CALIBRAR
   MPU.update();
   delay(10);
   if(millis()-lastPressTime>MIN_SPACE_BETWEEN_SHOW*1000){
@@ -183,7 +187,31 @@ void loop() {
     Serial.println(cells.getCell(pruebaX,pruebaY));
     lastPressTime=millis();
   }
-
+  */
+  /* PRUEBA VL. FALTA CALIBRAR
+  //while(VL.ask_distance()==false){
+  //  delay(100);
+  //}
+  //initUS=VL.get_range();
+  //initUS=VL.get_distance();
+  */
+ /* PRUEBA COMUNICACIÓN SERIE*/
+ if (primera){
+  endHour.setHours(3);
+  endHour.setMinutes(13);
+  endHour.setSeconds(5);
+  initHour.setHours(1);
+  initHour.setMinutes(20);
+  initHour.setSeconds(10);
+  initUS=100.3;
+  endUS=150.3;
+  cells.addCelda(10,5);
+  cells.addCelda(5,1);
+  sendInfoUSB();
+  primera=false;
+ }else{
+  delay(1000);
+ }
 
   /*
   //STATE MACHINE;
@@ -219,7 +247,7 @@ void loop() {
       stateBattery.turnOff(SoC_VL);
       stateBattery.turnOff(SoC_TFT);
       stateBattery.turnOff(SoC_BOOST);
-      if(sendInfo()!=1)
+      if(sendInfoUSB()!=1)
 
       actualState=State::OFF;
       break;
@@ -227,48 +255,20 @@ void loop() {
       break;
   }
   */
-
 }
 
 // FUNCTIONES DEFINITIOS
-/*
 uint8_t sendInfoUSB(){
-  /*
-    OUTPUT VALUES
-    ALL CORRECT          (1)  
-    ERROR CREATING SESSION (-1)
-    ERROR SENDING US     (-2)
-    ERROR SENDING HOUR   (-3)
-    ERROR SENDING MATRIX (-4)
-  
+  //SI SE QUEDA ATASCADO ES PUESTO QUE HA ENTRADA EN UN BUCLE INFINITO DE ESPERA DENTRO DE 
+  //ALGUNO DE LOS ENVIOS
   int cont=0;
-  while(ser.createSession()==false && cont<=10){
-    delay(2000);
-    cont++;
-  }
-  if(cont==10) return -1;
-  cont=0;
-  while(ser.sendUS(initUS,endUS)==false && cont<=5){
-    delay(500);
-    cont++;
-  }
-  if(cont==5) return -2;
-  cont=0;
-  while(ser.sendHours(initHour,endHour)==false && cont<=5){
-    delay(500);
-    cont++;
-  }
-  if(cont==5) return -3;
-  cont=0;
-  while(ser.sendMatrix(&cells)==false && cont<=5){
-    delay(500);
-    cont++;
-  }
-  if(cont==5) return -4;
-  cont=0;
+  ser.createSession();
+  ser.sendUS(initUS,endUS);
+  ser.sendHours(initHour,endHour);
+  ser.sendMatrix(&cells);
+  ser.deleteSession();
   return 1;
 }
-*/
 // INTERRUPT DEFINITIONS
 void IRAM_ATTR buttonInterrupt(){
   flagButton=true;

@@ -4,8 +4,9 @@
 Pantalla_TFT::Pantalla_TFT(int CS_PIN,int DC_PIN,int RST_PIN,int MOSI_PIN,int SCLK_PIN){
     this->tft=new Adafruit_ST7789(CS_PIN,DC_PIN,MOSI_PIN,SCLK_PIN,RST_PIN);  
 }
-void Pantalla_TFT::begin(int width, int height, int color){
+void Pantalla_TFT::begin(int width, int height, int color, int SPI_SPEED){
     this->tft->init(width,height);
+    this->tft->setSPISpeed(SPI_SPEED);
     this->tft->setRotation(3);
     this->color=color;
     this->tft->fillScreen(ST77XX_RED); // Pinta ROJO al inicio para ver si vive

@@ -24,7 +24,7 @@
 
         public:
             Sensor_Inercial(TwoWire* wireExt);
-            bool begin(uint8_t addr=MPU9250_ADDRESS,ACCEL_FS_SEL=ACCEL_FS_SEL::A16G, GYRO_FS_SEL=GYRO_FS_SEL::G2000DPS);
+            bool begin(uint8_t addr=MPU9250_ADDRESS,ACCEL_FS_SEL a=ACCEL_FS_SEL::A16G, GYRO_FS_SEL g=GYRO_FS_SEL::G2000DPS);
             void calibrate();
             bool update();
             

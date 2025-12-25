@@ -28,7 +28,7 @@
 
     public:
       SoC(uint16_t capacity, SoCLevel initLevel=SoCLevel::LOW_LEVEL);
-      int16_t addElement(int16_t powerCon, TypeElement type=TypeElement::LOAD);
+      int8_t addElement(int16_t powerCon, TypeElement type=TypeElement::LOAD);
       void deleteElement(uint8_t charge);
       void deleteAllElements();
       void turnOff(uint8_t charge);

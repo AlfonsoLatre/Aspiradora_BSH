@@ -2,8 +2,8 @@
   #define CASILLERO_h
   #include <Arduino.h>
   #include <vector>
-  #define numFilas 64
-  #define numCols 64
+  #define numFilas 16
+  #define numCols 16
 
   
   class Casillero{

@@ -22,8 +22,8 @@ SoC::SoC(uint16_t capacity, SoCLevel initLevel){
     }
     this->actualCapacity=this->level*this->capacity;
 }
-int16_t SoC::addElement(int16_t powerCon, TypeElement type){
-    int16_t pos=this->findFirstFree();
+int8_t SoC::addElement(int16_t powerCon, TypeElement type){
+    int8_t pos=this->findFirstFree();
     int16_t LPowerCon=powerCon;
     if(type==TypeElement::LOAD)
         LPowerCon=-LPowerCon;
@@ -98,7 +98,7 @@ String SoC::ToString(){
 //PRIVATE FUNCTIONS
 int16_t SoC::findFirstFree(){
     int16_t pos=0;
-    if(this->numElements<255){
+    if(this->numElements<maxElements){
         while(this->powerCon[pos]!=0)
             pos++;
     }else{
